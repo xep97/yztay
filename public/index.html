@@ -3,29 +3,14 @@
 <head>
   <title>Yatzy</title>
   <style>
-    body { font-family: Arial; max-width: 900px; margin: auto; }
-
-    .dice span {
-      font-size: 32px;
-      padding: 10px;
-      border: 2px solid black;
-      margin: 4px;
-      cursor: pointer;
-    }
-
-    .held {
-      background: #ccc;
-    }
-
-    .player {
-      padding: 10px;
-      margin-bottom: 10px;
-      border: 2px solid #000;
-    }
-
-    .current {
-      background: #c8f7c5; /* green */
-    }
+    body { font-family: Arial; max-width: 1000px; margin: auto; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #000; padding: 6px; text-align: center; }
+    th { background: #eee; }
+    .current { background: #c8f7c5; }
+    .clickable { cursor: pointer; background: #f0f0ff; }
+    .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; }
+    .held { background: #ccc; }
   </style>
 </head>
 <body>
@@ -34,69 +19,77 @@
 
 <input id="name" placeholder="Name">
 <button onclick="host()">Host</button>
-
-<input id="joinCode" placeholder="Game Code">
+<input id="joinCode" placeholder="Code">
 <button onclick="join()">Join</button>
 
 <h3 id="gameCode"></h3>
-<hr>
-
 <h3 id="turn"></h3>
 <div id="dice"></div>
 <button onclick="roll()">Roll</button>
-
-<h3>Scores</h3>
-<div id="scores"></div>
+<table id="scoreTable"></table>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-let currentCode = null;
+let gameCode = null;
+let playerName = null;
+
+const categories = [
+  "ones","twos","threes","fours","fives","sixes",
+  "pair","twoPairs","threeKind","fourKind",
+  "smallStraight","largeStraight","fullHouse",
+  "chance","yatzy"
+];
+
+// Try auto-rejoin if stored
+if (localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")) {
+  playerName = localStorage.getItem("yatzyName");
+  gameCode = localStorage.getItem("yatzyCode");
+  socket.emit("rejoinGame", { name: playerName, code: gameCode }, r => {
+    if (r.success) update(r.game);
+    else { localStorage.removeItem("yatzyName"); localStorage.removeItem("yatzyCode"); }
+  });
+}
 
 function host() {
-  const playerName = document.getElementById("name").value.trim();
-  if (!playerName) return alert("Enter name");
+  const name = document.getElementById("name").value.trim();
+  if (!name) return alert("Enter name");
+  playerName = name;
+  localStorage.setItem("yatzyName", name);
 
-  socket.emit("hostGame", { name: playerName }, r => {
-    currentCode = r.code;
-    document.getElementById("gameCode").textContent =
-      "Game Code: " + r.code;
+  socket.emit("hostGame", { name }, r => {
+    gameCode = r.code;
+    localStorage.setItem("yatzyCode", gameCode);
+    document.getElementById("gameCode").textContent = "Game Code: " + r.code;
     update(r.game);
   });
 }
 
 function join() {
-  const playerName = document.getElementById("name").value.trim();
+  const name = document.getElementById("name").value.trim();
   const code = document.getElementById("joinCode").value.trim().toUpperCase();
-  if (!playerName || !code) return;
+  if (!name || !code) return;
+  playerName = name;
+  localStorage.setItem("yatzyName", name);
+  localStorage.setItem("yatzyCode", code);
 
-  socket.emit("joinGame", { name: playerName, code }, r => {
-    currentCode = code;
-    document.getElementById("gameCode").textContent =
-      "Game Code: " + code;
+  socket.emit("joinGame", { name, code }, r => {
+    if (!r.success) return alert(r.error);
+    gameCode = code;
     update(r.game);
   });
 }
 
-function roll() {
-  socket.emit("roll", currentCode);
-}
-
-function hold(i) {
-  socket.emit("hold", { code: currentCode, i });
-}
-
-function score(cat) {
-  socket.emit("score", { code: currentCode, cat });
-}
+function roll() { socket.emit("roll", gameCode); }
+function hold(i) { socket.emit("hold", { code: gameCode, i }); }
+function score(cat) { socket.emit("score", { code: gameCode, cat }); }
 
 function update(g) {
   const current = g.players[g.current];
-  document.getElementById("turn").textContent = g.finished
-    ? "Game Over — Winner: " +
-      [...g.players].sort((a,b)=>b.total-a.total)[0].name
-    : "Turn: " + current.name;
+  document.getElementById("turn").textContent =
+    g.finished ? "Game Over" : "Turn: " + current.name;
 
+  // Dice
   const diceDiv = document.getElementById("dice");
   diceDiv.innerHTML = "";
   g.dice.forEach((d,i) => {
@@ -107,35 +100,30 @@ function update(g) {
     diceDiv.appendChild(s);
   });
 
-  const scoresDiv = document.getElementById("scores");
-  scoresDiv.innerHTML = "";
+  // Score Table
+  const table = document.getElementById("scoreTable");
+  table.innerHTML = "";
 
-  g.players.forEach(p => {
-    const div = document.createElement("div");
-    div.className = "player";
-    if (p.id === current.id) div.classList.add("current");
+  let header = "<tr><th>Category</th>";
+  g.players.forEach((p,i) => {
+    header += `<th class="${i===g.current?'current':''}">${p.name}</th>`;
+  });
+  header += "</tr>";
+  table.innerHTML += header;
 
-    div.innerHTML = `<b>${p.name}</b> (${p.total})<br>`;
-
-    Object.entries(p.scores).forEach(([c,v]) =>
-      div.innerHTML += `${c}: ${v}<br>`
-    );
-
-    if (p.id === current.id && g.rolls > 0 && !g.finished) {
-      [
-        "ones","twos","threes","fours","fives","sixes",
-        "pair","twoPairs","threeKind","fourKind",
-        "smallStraight","largeStraight","fullHouse",
-        "chance","yatzy"
-      ].forEach(c => {
-        if (p.scores[c] === undefined) {
-          div.innerHTML +=
-            `<button onclick="score('${c}')">${c}</button>`;
-        }
-      });
-    }
-
-    scoresDiv.appendChild(div);
+  categories.forEach(cat => {
+    let row = `<tr><td>${cat}</td>`;
+    g.players.forEach((p,i) => {
+      const val = p.scores[cat];
+      let cls = i===g.current ? "current" : "";
+      if (val === undefined && i===g.current && g.rolls > 0 && !g.finished) {
+        row += `<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
+      } else {
+        row += `<td class="${cls}">${val ?? ""}</td>`;
+      }
+    });
+    row += "</tr>";
+    table.innerHTML += row;
   });
 }
 
