@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Yatzy</title>
+  <style>
+    body { font-family: Arial; max-width: 800px; margin: auto; }
+    .dice span {
+      font-size: 32px;
+      padding: 10px;
+      border: 2px solid black;
+      margin: 4px;
+      cursor: pointer;
+    }
+    .held { background: #ccc; }
+  </style>
+</head>
+<body>
+
+<h2>Yatzy</h2>
+
+<input id="name" placeholder="Name">
+<button onclick="host()">Host</button>
+
+<input id="joinCode" placeholder="Game Code">
+<button onclick="join()">Join</button>
+
+<h3 id="gameCode"></h3>
+<hr>
+
+<h3 id="turn"></h3>
+<div id="dice"></div>
+<button onclick="roll()">Roll</button>
+
+<h3>Scores</h3>
+<div id="scores"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let currentCode = null;
+
+function host() {
+  const playerName = document.getElementById("name").value.trim();
+  if (!playerName) return alert("Enter your name");
+
+  socket.emit("hostGame", { name: playerName }, r => {
+    if (!r.success) return;
+    currentCode = r.code;
+    document.getElementById("gameCode").textContent =
+      "Game Code: " + r.code;
+    update(r.game);
+  });
+}
+
+function join() {
+  const playerName = document.getElementById("name").value.trim();
+  const code = document.getElementById("joinCode").value.trim().toUpperCase();
+  if (!playerName || !code) return alert("Enter name and code");
+
+  socket.emit("joinGame", { name: playerName, code }, r => {
+    if (!r.success) return alert("Failed to join game");
+    currentCode = code;
+    document.getElementById("gameCode").textContent =
+      "Game Code: " + code;
+    update(r.game);
+  });
+}
+
+function roll() {
+  socket.emit("roll", currentCode);
+}
+
+function hold(i) {
+  socket.emit("hold", { code: currentCode, i });
+}
+
+function score(cat) {
+  socket.emit("score", { code: currentCode, cat });
+}
+
+function update(g) {
+  const current = g.players[g.current];
+  document.getElementById("turn").textContent = g.finished
+    ? "Game Over — Winner: " +
+      [...g.players].sort((a,b)=>b.total-a.total)[0].name
+    : "Turn: " + current.name;
+
+  const diceDiv = document.getElementById("dice");
+  diceDiv.innerHTML = "";
+  g.dice.forEach((d,i) => {
+    const s = document.createElement("span");
+    s.textContent = d;
+    if (g.held[i]) s.classList.add("held");
+    s.onclick = () => hold(i);
+    diceDiv.appendChild(s);
+  });
+
+  const scoresDiv = document.getElementById("scores");
+  scoresDiv.innerHTML = "";
+  g.players.forEach(p => {
+    scoresDiv.innerHTML += `<b>${p.name}</b> (${p.total})<br>`;
+    Object.entries(p.scores).forEach(([c,v]) =>
+      scoresDiv.innerHTML += `${c}: ${v}<br>`
+    );
+
+    if (p.id === current.id && !g.finished) {
+      [
+        "ones","twos","threes","fours","fives","sixes",
+        "pair","twoPairs","threeKind","fourKind",
+        "smallStraight","largeStraight","fullHouse",
+        "chance","yatzy"
+      ].forEach(c => {
+        if (p.scores[c] === undefined)
+          scoresDiv.innerHTML +=
+            `<button onclick="score('${c}')">${c}</button>`;
+      });
+    }
+    scoresDiv.innerHTML += "<hr>";
+  });
+}
+
+socket.on("update", update);
+</script>
+
+</body>
+</html>
