@@ -11,6 +11,7 @@
     .clickable { cursor: pointer; background: #f0f0ff; }
     .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; }
     .held { background: #ccc; }
+    #newGameBtn { margin-top: 10px; padding: 6px 12px; }
   </style>
 </head>
 <body>
@@ -26,6 +27,7 @@
 <h3 id="turn"></h3>
 <div id="dice"></div>
 <button onclick="roll()">Roll</button>
+<button id="newGameBtn" style="display:none;" onclick="startNewGame()">New Game</button>
 <table id="scoreTable"></table>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -33,6 +35,7 @@
 const socket = io();
 let gameCode = null;
 let playerName = null;
+let isHost = false;
 
 const categories = [
   "ones","twos","threes","fours","fives","sixes",
@@ -41,12 +44,11 @@ const categories = [
   "chance","yatzy"
 ];
 
-// Try auto-rejoin if stored
 if (localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")) {
   playerName = localStorage.getItem("yatzyName");
   gameCode = localStorage.getItem("yatzyCode");
   socket.emit("rejoinGame", { name: playerName, code: gameCode }, r => {
-    if (r.success) update(r.game);
+    if (r.success) { isHost = r.game.players.find(p => p.name===playerName)?.isHost; update(r.game); }
     else { localStorage.removeItem("yatzyName"); localStorage.removeItem("yatzyCode"); }
   });
 }
@@ -61,6 +63,7 @@ function host() {
     gameCode = r.code;
     localStorage.setItem("yatzyCode", gameCode);
     document.getElementById("gameCode").textContent = "Game Code: " + r.code;
+    isHost = true;
     update(r.game);
   });
 }
@@ -76,6 +79,7 @@ function join() {
   socket.emit("joinGame", { name, code }, r => {
     if (!r.success) return alert(r.error);
     gameCode = code;
+    isHost = r.game.players.find(p=>p.name===name)?.isHost;
     update(r.game);
   });
 }
@@ -84,12 +88,27 @@ function roll() { socket.emit("roll", gameCode); }
 function hold(i) { socket.emit("hold", { code: gameCode, i }); }
 function score(cat) { socket.emit("score", { code: gameCode, cat }); }
 
+function startNewGame() {
+  socket.emit("newGame", gameCode);
+}
+
+socket.on("promptNewGame", ({ newCode }) => {
+  if(confirm("Host started a new game. Join now?")) {
+    gameCode = newCode;
+    localStorage.setItem("yatzyCode", newCode);
+    socket.emit("rejoinGame", { name: playerName, code: newCode }, r => {
+      if(r.success) update(r.game);
+    });
+  }
+});
+
 function update(g) {
   const current = g.players[g.current];
   document.getElementById("turn").textContent =
     g.finished ? "Game Over" : "Turn: " + current.name;
 
-  // Dice
+  document.getElementById("newGameBtn").style.display = (g.finished && isHost) ? "inline-block" : "none";
+
   const diceDiv = document.getElementById("dice");
   diceDiv.innerHTML = "";
   g.dice.forEach((d,i) => {
@@ -100,31 +119,34 @@ function update(g) {
     diceDiv.appendChild(s);
   });
 
-  // Score Table
   const table = document.getElementById("scoreTable");
   table.innerHTML = "";
 
-  let header = "<tr><th>Category</th>";
-  g.players.forEach((p,i) => {
-    header += `<th class="${i===g.current?'current':''}">${p.name}</th>`;
-  });
-  header += "</tr>";
-  table.innerHTML += header;
+  if(!g.finished) {
+    let header = "<tr><th>Category</th>";
+    g.players.forEach((p,i)=>header+=`<th class="${i===g.current?'current':''}">${p.name}</th>`);
+    header+="</tr>";
+    table.innerHTML+=header;
 
-  categories.forEach(cat => {
-    let row = `<tr><td>${cat}</td>`;
-    g.players.forEach((p,i) => {
-      const val = p.scores[cat];
-      let cls = i===g.current ? "current" : "";
-      if (val === undefined && i===g.current && g.rolls > 0 && !g.finished) {
-        row += `<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
-      } else {
-        row += `<td class="${cls}">${val ?? ""}</td>`;
-      }
+    categories.forEach(cat=>{
+      let row=`<tr><td>${cat}</td>`;
+      g.players.forEach((p,i)=>{
+        const val = p.scores[cat];
+        let cls=i===g.current?'current':'';
+        if(val===undefined && i===g.current && g.rolls>0) row+=`<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
+        else row+=`<td class="${cls}">${val??''}</td>`;
+      });
+      row+="</tr>";
+      table.innerHTML+=row;
     });
-    row += "</tr>";
-    table.innerHTML += row;
-  });
+  } else {
+    // Finished: show ranking
+    const sorted = [...g.players].sort((a,b)=>b.total-a.total);
+    table.innerHTML="<tr><th>Place</th><th>Name</th><th>Total Score</th></tr>";
+    sorted.forEach((p,i)=>{
+      table.innerHTML+=`<tr><td>${i+1}</td><td>${p.name}</td><td>${p.total}</td></tr>`;
+    });
+  }
 }
 
 socket.on("update", update);

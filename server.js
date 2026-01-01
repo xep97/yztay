@@ -74,7 +74,6 @@ function scoreCategory(dice, cat) {
 
 io.on("connection", socket => {
 
-  // Host a new game
   socket.on("hostGame", ({ name }, cb) => {
     let code;
     do { code = generateCode(); } while (games[code]);
@@ -85,7 +84,8 @@ io.on("connection", socket => {
         name,
         scores: {},
         total: 0,
-        bonus: false
+        bonus: false,
+        isHost: true
       }],
       current: 0,
       dice: [1,1,1,1,1],
@@ -98,15 +98,12 @@ io.on("connection", socket => {
     cb({ success: true, code, game: games[code] });
   });
 
-  // Join existing game
   socket.on("joinGame", ({ name, code }, cb) => {
     const g = games[code];
     if (!g || g.players.length >= MAX_PLAYERS) {
       cb({ success: false, error: "Game not found or full" });
       return;
     }
-
-    // ❌ Prevent duplicate names
     if (g.players.some(p => p.name === name)) {
       cb({ success: false, error: "Name already taken" });
       return;
@@ -117,7 +114,8 @@ io.on("connection", socket => {
       name,
       scores: {},
       total: 0,
-      bonus: false
+      bonus: false,
+      isHost: false
     });
 
     socket.join(code);
@@ -128,12 +126,8 @@ io.on("connection", socket => {
   socket.on("rejoinGame", ({ name, code }, cb) => {
     const g = games[code];
     if (!g) { cb({ success: false }); return; }
-
-    // Find player with same name
     const player = g.players.find(p => p.name === name);
     if (!player) { cb({ success: false }); return; }
-
-    // Update socket id
     player.id = socket.id;
     socket.join(code);
     cb({ success: true, game: g });
@@ -145,7 +139,6 @@ io.on("connection", socket => {
     if (!g || g.finished) return;
     const p = g.players[g.current];
     if (p.id !== socket.id || g.rolls >= 3) return;
-
     g.dice = rollDice(g.dice, g.held);
     g.rolls++;
     io.to(code).emit("update", g);
@@ -171,6 +164,7 @@ io.on("connection", socket => {
     g.rolls = 0;
     g.held = [false,false,false,false,false];
 
+    // Check if finished
     if (g.players.every(pl =>
       CATEGORIES.every(c => pl.scores[c] !== undefined)
     )) g.finished = true;
@@ -178,7 +172,40 @@ io.on("connection", socket => {
     io.to(code).emit("update", g);
   });
 
+  // Host starts a new game
+  socket.on("newGame", code => {
+    const g = games[code];
+    if (!g) return;
+    const host = g.players.find(p => p.id === socket.id && p.isHost);
+    if (!host) return;
+
+    const newCode = generateCode();
+    const newGame = {
+      players: g.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        scores: {},
+        total: 0,
+        bonus: false,
+        isHost: p.isHost
+      })),
+      current: 0,
+      dice: [1,1,1,1,1],
+      held: [false,false,false,false,false],
+      rolls: 0,
+      finished: false
+    };
+
+    games[newCode] = newGame;
+
+    // Notify old players to join new game
+    g.players.forEach(p => {
+      io.to(p.id).emit("promptNewGame", { newCode });
+    });
+
+    // Remove old game
+    delete games[code];
+  });
+
 });
-server.listen(3000, () =>
-  console.log("Server running at http://localhost:3000")
-);
+server.listen(3000, () => console.log("Server running at http://localhost:3000"));
