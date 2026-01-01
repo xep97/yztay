@@ -151,6 +151,9 @@ io.on("connection", socket => {
     const g = games[code];
     if (!g || g.finished) return;
 
+    // 🚫 MUST have rolled at least once
+    if (g.rolls === 0) return;
+
     const p = g.players[g.current];
     if (p.id !== socket.id || p.scores[cat] !== undefined) return;
 
