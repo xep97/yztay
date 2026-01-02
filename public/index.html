@@ -107,6 +107,9 @@ let playerName = null;
 let isHost = false;
 let gameStarted = false;
 
+let animateNextUpdate = false;
+
+
 const upperCats = ["ones","twos","threes","fours","fives","sixes"];
 const lowerCats = ["pair","twoPairs","threeKind","fourKind","smallStraight","largeStraight","fullHouse","chance","yatzy"];
 
@@ -156,7 +159,10 @@ function join(){
 }
 
 function startGame(){ socket.emit("startGame",gameCode); }
-function roll(){ socket.emit("roll",gameCode); }
+function roll(){ 
+    animateNextUpdate = true;
+    socket.emit("roll",gameCode); 
+}
 function hold(i){ socket.emit("hold",{code:gameCode,i}); }
 function score(cat){ socket.emit("score",{code:gameCode,cat}); }
 function leaveGame(){
@@ -208,6 +214,8 @@ function calcHints(dice){
 }
 
 // --- Update UI ---
+
+
 function update(g){
   const current = g.players[g.current];
   gameStarted = g.started;
@@ -261,10 +269,11 @@ for (let i = 0; i < g.dice.length; i += rowSize) {
     if (g.held[i + j]) die.classList.add("held");
 
     // Roll animation
-    if (g.rolls > 0) {
-      die.classList.add("rolling");
-      setTimeout(() => die.classList.remove("rolling"), 500);
+    if (animateNextUpdate && !g.held[i + j]) {
+        die.classList.add("rolling");
+        setTimeout(() => die.classList.remove("rolling"), 500);
     }
+
 
     // Add pips
     for (let k = 0; k < 9; k++) {
@@ -358,6 +367,8 @@ for (let i = 0; i < g.dice.length; i += rowSize) {
     table.innerHTML="<tr><th>Place</th><th>Name</th><th>Total Score</th></tr>";
     sorted.forEach((p,i)=>{ table.innerHTML+=`<tr><td>${i+1}</td><td>${p.name}</td><td>${p.total}</td></tr>` });
   }
+  animateNextUpdate = false;
+
 }
 
 socket.on("update",update);
