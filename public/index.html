@@ -3,15 +3,18 @@
 <head>
   <title>Yatzy</title>
   <style>
-    body { font-family: Arial; max-width: 1000px; margin: auto; }
+    body { font-family: Arial; max-width: 1200px; margin: auto; }
     table { border-collapse: collapse; width: 100%; margin-top: 10px; }
     th, td { border: 1px solid #000; padding: 6px; text-align: center; }
     th { background: #eee; }
     .current { background: #c8f7c5; }
     .clickable { cursor: pointer; background: #f0f0ff; }
-    .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; }
+    .hint { background: #ffffcc; }
+    .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; display: inline-block; width: 50px; text-align:center;}
     .held { background: #ccc; }
     button { margin: 4px; padding: 6px 12px; }
+    .dice-row { margin-bottom: 10px; }
+    .section-header { background: #ddd; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -20,6 +23,11 @@
 
 <div id="lobby">
   <input id="name" placeholder="Name">
+  <select id="mode">
+    <option value="normal">Normal (5 dice)</option>
+    <option value="crazy">Crazy (10 dice)</option>
+    <option value="insane">Insane (20 dice)</option>
+  </select>
   <button onclick="host()">Host</button>
   <input id="joinCode" placeholder="Code">
   <button onclick="join()">Join</button>
@@ -44,52 +52,46 @@ let playerName = null;
 let isHost = false;
 let gameStarted = false;
 
-const categories = [
-  "ones","twos","threes","fours","fives","sixes",
-  "pair","twoPairs","threeKind","fourKind",
-  "smallStraight","largeStraight","fullHouse",
-  "chance","yatzy"
-];
+const upperCats = ["ones","twos","threes","fours","fives","sixes"];
+const lowerCats = ["pair","twoPairs","threeKind","fourKind","smallStraight","largeStraight","fullHouse","chance","yatzy"];
 
-if (localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")) {
+if(localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")){
   playerName = localStorage.getItem("yatzyName");
   gameCode = localStorage.getItem("yatzyCode");
-  socket.emit("rejoinGame", { name: playerName, code: gameCode }, r => {
-    if (r.success) { 
-      isHost = r.game.players.find(p => p.name===playerName)?.isHost; 
+  socket.emit("rejoinGame",{name:playerName,code:gameCode},r=>{
+    if(r.success){ 
+      isHost = r.game.players.find(p=>p.name===playerName)?.isHost;
       gameStarted = r.game.started;
-      update(r.game); 
-    } else { 
-      localStorage.removeItem("yatzyName"); 
-      localStorage.removeItem("yatzyCode"); 
-    }
+      update(r.game);
+    } else { localStorage.removeItem("yatzyName"); localStorage.removeItem("yatzyCode"); }
   });
 }
 
-function host() {
+function host(){
   const name = document.getElementById("name").value.trim();
-  if (!name) return alert("Enter name");
+  const mode = document.getElementById("mode").value;
+  if(!name) return alert("Enter name");
   playerName = name;
-  localStorage.setItem("yatzyName", name);
+  localStorage.setItem("yatzyName",name);
 
-  socket.emit("hostGame", { name }, r => {
+  socket.emit("hostGame",{name,mode},r=>{
     gameCode = r.code;
-    localStorage.setItem("yatzyCode", gameCode);
+    localStorage.setItem("yatzyCode",gameCode);
     isHost = true;
     update(r.game);
   });
 }
 
-function join() {
+function join(){
   const name = document.getElementById("name").value.trim();
   const code = document.getElementById("joinCode").value.trim().toUpperCase();
-  if (!name || !code) return;
+  if(!name||!code) return;
   playerName = name;
-  localStorage.setItem("yatzyName", name);
-  localStorage.setItem("yatzyCode", code);
+  localStorage.setItem("yatzyName",name);
+  localStorage.setItem("yatzyCode",code);
 
-  socket.emit("joinGame", { name, code }, r => {
-    if (!r.success) return alert(r.error);
+  socket.emit("joinGame",{name,code},r=>{
+    if(!r.success) return alert(r.error);
     gameCode = code;
     isHost = r.game.players.find(p=>p.name===name)?.isHost;
     gameStarted = r.game.started;
@@ -97,97 +99,174 @@ function join() {
   });
 }
 
-function startGame() {
-  socket.emit("startGame", gameCode);
-}
+function startGame(){ socket.emit("startGame",gameCode); }
+function roll(){ socket.emit("roll",gameCode); }
+function hold(i){ socket.emit("hold",{code:gameCode,i}); }
+function score(cat){ socket.emit("score",{code:gameCode,cat}); }
 
-function roll() { socket.emit("roll", gameCode); }
-function hold(i) { socket.emit("hold", { code: gameCode, i }); }
-function score(cat) { socket.emit("score", { code: gameCode, cat }); }
-
-function leaveGame() {
+function leaveGame(){
   if(!confirm("Are you sure you want to leave the game?")) return;
-  socket.emit("leaveGame", gameCode);
+  socket.emit("leaveGame",gameCode);
   localStorage.removeItem("yatzyCode");
   document.getElementById("lobby").style.display="block";
   document.getElementById("gameArea").style.display="none";
-  gameCode = null;
-  gameStarted = false;
+  gameCode = null; gameStarted=false;
   document.getElementById("gameCode").textContent="";
   document.getElementById("turn").textContent="";
   document.getElementById("dice").innerHTML="";
   document.getElementById("scoreTable").innerHTML="";
 }
 
-function startNewGame() {
-  socket.emit("newGame", gameCode);
-}
+function startNewGame(){ socket.emit("newGame",gameCode); }
 
-socket.on("promptNewGame", ({ newCode }) => {
-  if(confirm("Host started a new game. Join now?")) {
+socket.on("promptNewGame",({newCode})=>{
+  if(confirm("Host started a new game. Join now?")){
     gameCode = newCode;
-    localStorage.setItem("yatzyCode", newCode);
-    socket.emit("rejoinGame", { name: playerName, code: newCode }, r => {
-      if(r.success) update(r.game);
-    });
+    localStorage.setItem("yatzyCode",newCode);
+    socket.emit("rejoinGame",{name:playerName,code:newCode},r=>{ if(r.success) update(r.game); });
   }
 });
 
-function update(g) {
+// --- Calculate hint scores for current dice ---
+function calcHints(dice){
+  const counts = {};
+  dice.forEach(d=>counts[d]=(counts[d]||0)+1);
+  const total = dice.reduce((a,b)=>a+b,0);
+  const hints = {};
+
+  // Upper
+  for(let i=1;i<=6;i++) hints[["ones","twos","threes","fours","fives","sixes"][i-1]]=(counts[i]||0)*i;
+
+  // Lower
+  const pairs = Object.keys(counts).filter(n=>counts[n]>=2).map(Number).sort((a,b)=>b-a);
+  hints.pair = pairs[0]?pairs[0]*2:0;
+  hints.twoPairs = pairs.length>=2?pairs[0]*2 + pairs[1]*2:0;
+  const three = Object.keys(counts).filter(n=>counts[n]>=3).map(Number).sort((a,b)=>b-a);
+  hints.threeKind = three[0]?three[0]*3:0;
+  const four = Object.keys(counts).filter(n=>counts[n]>=4).map(Number).sort((a,b)=>b-a);
+  hints.fourKind = four[0]?four[0]*4:0;
+  const sortedDice = [...new Set(dice)].sort((a,b)=>a-b);
+  hints.smallStraight = sortedDice.join(",").includes("1,2,3,4,5")?15:0;
+  hints.largeStraight = sortedDice.join(",").includes("2,3,4,5,6")?20:0;
+  const full = three[0] && pairs.length>=2 ? three[0]*3 + pairs[0]*2 : 0;
+  hints.fullHouse = full;
+  hints.chance = total;
+  hints.yatzy = Object.values(counts).includes(dice.length)?50:0;
+  return hints;
+}
+
+function update(g){
   const current = g.players[g.current];
   gameStarted = g.started;
 
-  document.getElementById("lobby").style.display = "none";
-  document.getElementById("gameArea").style.display = "block";
+  // Only hide lobby if player is in a game
+  if(gameCode){
+    document.getElementById("lobby").style.display="none";
+    document.getElementById("gameArea").style.display="block";
+  }
 
-  document.getElementById("gameCode").textContent = "Game Code: " + gameCode;
+  document.getElementById("gameCode").textContent = "Game Code: "+gameCode;
   document.getElementById("turn").textContent =
-    g.finished ? "Game Over" : (gameStarted ? "Turn: " + current.name : "Waiting for host to start");
+    g.finished ? "Game Over" : (gameStarted ? "Turn: "+current.name : "Waiting for host to start");
 
-  document.getElementById("startBtn").style.display = (isHost && !g.started) ? "inline-block" : "none";
-  document.getElementById("newGameBtn").style.display = (g.finished && isHost) ? "inline-block" : "none";
+  document.getElementById("startBtn").style.display = (isHost&&!g.started) ? "inline-block":"none";
+  document.getElementById("newGameBtn").style.display = (g.finished && isHost) ? "inline-block":"none";
   document.getElementById("leaveBtn").style.display = "inline-block";
 
+  // Dice display
   const diceDiv = document.getElementById("dice");
-  diceDiv.innerHTML = "";
-  g.dice.forEach((d,i) => {
-    const s = document.createElement("span");
-    s.textContent = d;
-    if (g.held[i]) s.classList.add("held");
-    s.onclick = () => hold(i);
-    diceDiv.appendChild(s);
-  });
+  diceDiv.innerHTML="";
+  const rowSize = 5;
+  for(let i=0;i<g.dice.length;i+=rowSize){
+    const row = document.createElement("div");
+    row.className="dice-row";
+    g.dice.slice(i,i+rowSize).forEach((d,j)=>{
+      const s = document.createElement("span");
+      s.textContent=d;
+      if(g.held[i+j]) s.classList.add("held");
+      s.onclick=()=>hold(i+j);
+      row.appendChild(s);
+    });
+    diceDiv.appendChild(row);
+  }
 
+  // Score table with hints
   const table = document.getElementById("scoreTable");
-  table.innerHTML = "";
+  table.innerHTML="";
 
-  if(!g.finished) {
-    let header = "<tr><th>Category</th>";
+  if(!g.finished){
+    const hints = current ? calcHints(g.dice) : {};
+
+    let header="<tr><th>Category</th>";
     g.players.forEach((p,i)=>header+=`<th class="${i===g.current && gameStarted?'current':''}">${p.name}</th>`);
     header+="</tr>";
     table.innerHTML+=header;
 
-    categories.forEach(cat=>{
+    // Upper section
+    table.innerHTML+='<tr class="section-header"><td colspan="'+(g.players.length+1)+'">Upper Section</td></tr>';
+    let subtotalRow="<tr><td>Subtotal</td>";
+    let bonusRow="<tr><td>Bonus (50 if subtotal ≥63)</td>";
+    upperCats.forEach(cat=>{
       let row=`<tr><td>${cat}</td>`;
       g.players.forEach((p,i)=>{
         const val = p.scores[cat];
         let cls=i===g.current && gameStarted?'current':'';
-        if(val===undefined && i===g.current && g.rolls>0 && gameStarted) row+=`<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
-        else row+=`<td class="${cls}">${val??''}</td>`;
+        let display = val!==undefined?val:'';
+        if(val===undefined && i===g.current && g.rolls>0 && gameStarted){
+          display = hints[cat];
+          cls+=" hint clickable";
+        }
+        row+=`<td class="${cls}" onclick="${val===undefined && i===g.current && g.rolls>0 && gameStarted ? `score('${cat}')`:''}">${display}</td>`;
       });
       row+="</tr>";
       table.innerHTML+=row;
     });
+    g.players.forEach(p=>{
+      const subtotal = upperCats.reduce((a,c)=>a+(p.scores[c]??0),0);
+      subtotalRow+=`<td>${subtotal}</td>`;
+      bonusRow+=`<td>${subtotal>=63?50:0}</td>`;
+    });
+    subtotalRow+="</tr>"; bonusRow+="</tr>";
+    table.innerHTML+=subtotalRow+bonusRow;
+
+    // Lower section
+    table.innerHTML+='<tr class="section-header"><td colspan="'+(g.players.length+1)+'">Lower Section</td></tr>';
+    lowerCats.forEach(cat=>{
+      let row=`<tr><td>${cat}</td>`;
+      g.players.forEach((p,i)=>{
+        const val = p.scores[cat];
+        let cls=i===g.current && gameStarted?'current':'';
+        let display = val!==undefined?val:'';
+        if(val===undefined && i===g.current && g.rolls>0 && gameStarted){
+          display = hints[cat];
+          cls+=" hint clickable";
+        }
+        row+=`<td class="${cls}" onclick="${val===undefined && i===g.current && g.rolls>0 && gameStarted ? `score('${cat}')`:''}">${display}</td>`;
+      });
+      row+="</tr>";
+      table.innerHTML+=row;
+    });
+
+    // Total
+    let totalRow="<tr><td>Total</td>";
+    g.players.forEach(p=>{
+      const subtotal = upperCats.reduce((a,c)=>a+(p.scores[c]??0),0);
+      const bonus = subtotal>=63?50:0;
+      const lowerTotal = lowerCats.reduce((a,c)=>a+(p.scores[c]??0),0);
+      totalRow+=`<td>${subtotal+bonus+lowerTotal}</td>`;
+    });
+    totalRow+="</tr>";
+    table.innerHTML+=totalRow;
+
   } else {
+    // Finished game sorted
     const sorted = [...g.players].sort((a,b)=>b.total-a.total);
     table.innerHTML="<tr><th>Place</th><th>Name</th><th>Total Score</th></tr>";
-    sorted.forEach((p,i)=>{
-      table.innerHTML+=`<tr><td>${i+1}</td><td>${p.name}</td><td>${p.total}</td></tr>`;
-    });
+    sorted.forEach((p,i)=>{ table.innerHTML+=`<tr><td>${i+1}</td><td>${p.name}</td><td>${p.total}</td></tr>` });
   }
 }
 
-socket.on("update", update);
+socket.on("update",update);
 </script>
 
 </body>

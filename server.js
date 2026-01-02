@@ -21,7 +21,7 @@ const CATEGORIES = [
 function generateCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return Array.from({ length: 8 }, () =>
-    chars[Math.floor(Math.random() * 6)] + chars[Math.floor(Math.random() * 6)]
+    chars[Math.floor(Math.random() * chars.length)]
   ).join("").slice(0,8);
 }
 
@@ -74,9 +74,12 @@ function scoreCategory(dice, cat) {
 
 io.on("connection", socket => {
 
-  socket.on("hostGame", ({ name }, cb) => {
+  socket.on("hostGame", ({ name, mode }, cb) => {
     let code;
     do { code = generateCode(); } while (games[code]);
+
+    // determine dice count based on mode
+    const diceCount = mode === "crazy" ? 10 : mode === "insane" ? 20 : 5;
 
     games[code] = {
       players: [{
@@ -88,11 +91,12 @@ io.on("connection", socket => {
         isHost: true
       }],
       current: 0,
-      dice: [1,1,1,1,1],
-      held: [false,false,false,false,false],
+      dice: Array(diceCount).fill(1),
+      held: Array(diceCount).fill(false),
       rolls: 0,
       finished: false,
-      started: false
+      started: false,
+      mode
     };
 
     socket.join(code);
@@ -146,12 +150,10 @@ io.on("connection", socket => {
     if (idx !== -1) g.players.splice(idx, 1);
     socket.leave(code);
 
-    // If host leaves and players remain, assign new host
     if(g.players.length > 0 && !g.players.some(p=>p.isHost)){
       g.players[0].isHost = true;
     }
 
-    // If no players remain, delete game
     if(g.players.length === 0){
       delete games[code];
       return;
@@ -198,7 +200,7 @@ io.on("connection", socket => {
 
     g.current = (g.current + 1) % g.players.length;
     g.rolls = 0;
-    g.held = [false,false,false,false,false];
+    g.held = Array(g.dice.length).fill(false);
 
     if (g.players.every(pl =>
       CATEGORIES.every(c => pl.scores[c] !== undefined)
@@ -214,6 +216,8 @@ io.on("connection", socket => {
     if (!host) return;
 
     const newCode = generateCode();
+    const diceCount = g.mode === "crazy" ? 10 : g.mode === "insane" ? 20 : 5;
+
     const newGame = {
       players: g.players.map(p => ({
         id: p.id,
@@ -224,11 +228,12 @@ io.on("connection", socket => {
         isHost: p.isHost
       })),
       current: 0,
-      dice: [1,1,1,1,1],
-      held: [false,false,false,false,false],
+      dice: Array(diceCount).fill(1),
+      held: Array(diceCount).fill(false),
       rolls: 0,
       finished: false,
-      started: false
+      started: false,
+      mode: g.mode
     };
 
     games[newCode] = newGame;
