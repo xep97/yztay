@@ -21,8 +21,8 @@ const CATEGORIES = [
 function generateCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return Array.from({ length: 8 }, () =>
-    chars[Math.floor(Math.random() * chars.length)]
-  ).join("");
+    chars[Math.floor(Math.random() * 6)] + chars[Math.floor(Math.random() * 6)]
+  ).join("").slice(0,8);
 }
 
 function rollDice(dice, held) {
@@ -136,6 +136,27 @@ io.on("connection", socket => {
     player.id = socket.id;
     socket.join(code);
     cb({ success: true, game: g });
+    io.to(code).emit("update", g);
+  });
+
+  socket.on("leaveGame", code => {
+    const g = games[code];
+    if (!g) return;
+    const idx = g.players.findIndex(p => p.id === socket.id);
+    if (idx !== -1) g.players.splice(idx, 1);
+    socket.leave(code);
+
+    // If host leaves and players remain, assign new host
+    if(g.players.length > 0 && !g.players.some(p=>p.isHost)){
+      g.players[0].isHost = true;
+    }
+
+    // If no players remain, delete game
+    if(g.players.length === 0){
+      delete games[code];
+      return;
+    }
+
     io.to(code).emit("update", g);
   });
 

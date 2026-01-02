@@ -18,18 +18,23 @@
 
 <h2>Yatzy</h2>
 
-<input id="name" placeholder="Name">
-<button onclick="host()">Host</button>
-<input id="joinCode" placeholder="Code">
-<button onclick="join()">Join</button>
-<button id="startBtn" style="display:none;" onclick="startGame()">Start Game</button>
+<div id="lobby">
+  <input id="name" placeholder="Name">
+  <button onclick="host()">Host</button>
+  <input id="joinCode" placeholder="Code">
+  <button onclick="join()">Join</button>
+</div>
 
-<h3 id="gameCode"></h3>
-<h3 id="turn"></h3>
-<div id="dice"></div>
-<button onclick="roll()">Roll</button>
-<button id="newGameBtn" style="display:none;" onclick="startNewGame()">New Game</button>
-<table id="scoreTable"></table>
+<div id="gameArea" style="display:none;">
+  <h3 id="gameCode"></h3>
+  <h3 id="turn"></h3>
+  <div id="dice"></div>
+  <button onclick="roll()">Roll</button>
+  <button id="startBtn" style="display:none;" onclick="startGame()">Start Game</button>
+  <button id="leaveBtn" onclick="leaveGame()">Leave Game</button>
+  <button id="newGameBtn" style="display:none;" onclick="startNewGame()">New Game</button>
+  <table id="scoreTable"></table>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -100,6 +105,20 @@ function roll() { socket.emit("roll", gameCode); }
 function hold(i) { socket.emit("hold", { code: gameCode, i }); }
 function score(cat) { socket.emit("score", { code: gameCode, cat }); }
 
+function leaveGame() {
+  if(!confirm("Are you sure you want to leave the game?")) return;
+  socket.emit("leaveGame", gameCode);
+  localStorage.removeItem("yatzyCode");
+  document.getElementById("lobby").style.display="block";
+  document.getElementById("gameArea").style.display="none";
+  gameCode = null;
+  gameStarted = false;
+  document.getElementById("gameCode").textContent="";
+  document.getElementById("turn").textContent="";
+  document.getElementById("dice").innerHTML="";
+  document.getElementById("scoreTable").innerHTML="";
+}
+
 function startNewGame() {
   socket.emit("newGame", gameCode);
 }
@@ -117,13 +136,17 @@ socket.on("promptNewGame", ({ newCode }) => {
 function update(g) {
   const current = g.players[g.current];
   gameStarted = g.started;
+
+  document.getElementById("lobby").style.display = "none";
+  document.getElementById("gameArea").style.display = "block";
+
+  document.getElementById("gameCode").textContent = "Game Code: " + gameCode;
   document.getElementById("turn").textContent =
     g.finished ? "Game Over" : (gameStarted ? "Turn: " + current.name : "Waiting for host to start");
 
   document.getElementById("startBtn").style.display = (isHost && !g.started) ? "inline-block" : "none";
   document.getElementById("newGameBtn").style.display = (g.finished && isHost) ? "inline-block" : "none";
-
-  document.getElementById("gameCode").textContent = "Game Code: " + gameCode;
+  document.getElementById("leaveBtn").style.display = "inline-block";
 
   const diceDiv = document.getElementById("dice");
   diceDiv.innerHTML = "";
