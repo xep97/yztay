@@ -11,7 +11,7 @@
     .clickable { cursor: pointer; background: #f0f0ff; }
     .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; }
     .held { background: #ccc; }
-    #newGameBtn { margin-top: 10px; padding: 6px 12px; }
+    button { margin: 4px; padding: 6px 12px; }
   </style>
 </head>
 <body>
@@ -22,6 +22,7 @@
 <button onclick="host()">Host</button>
 <input id="joinCode" placeholder="Code">
 <button onclick="join()">Join</button>
+<button id="startBtn" style="display:none;" onclick="startGame()">Start Game</button>
 
 <h3 id="gameCode"></h3>
 <h3 id="turn"></h3>
@@ -36,6 +37,7 @@ const socket = io();
 let gameCode = null;
 let playerName = null;
 let isHost = false;
+let gameStarted = false;
 
 const categories = [
   "ones","twos","threes","fours","fives","sixes",
@@ -48,8 +50,14 @@ if (localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")) {
   playerName = localStorage.getItem("yatzyName");
   gameCode = localStorage.getItem("yatzyCode");
   socket.emit("rejoinGame", { name: playerName, code: gameCode }, r => {
-    if (r.success) { isHost = r.game.players.find(p => p.name===playerName)?.isHost; update(r.game); }
-    else { localStorage.removeItem("yatzyName"); localStorage.removeItem("yatzyCode"); }
+    if (r.success) { 
+      isHost = r.game.players.find(p => p.name===playerName)?.isHost; 
+      gameStarted = r.game.started;
+      update(r.game); 
+    } else { 
+      localStorage.removeItem("yatzyName"); 
+      localStorage.removeItem("yatzyCode"); 
+    }
   });
 }
 
@@ -62,7 +70,6 @@ function host() {
   socket.emit("hostGame", { name }, r => {
     gameCode = r.code;
     localStorage.setItem("yatzyCode", gameCode);
-    document.getElementById("gameCode").textContent = "Game Code: " + r.code;
     isHost = true;
     update(r.game);
   });
@@ -80,8 +87,13 @@ function join() {
     if (!r.success) return alert(r.error);
     gameCode = code;
     isHost = r.game.players.find(p=>p.name===name)?.isHost;
+    gameStarted = r.game.started;
     update(r.game);
   });
+}
+
+function startGame() {
+  socket.emit("startGame", gameCode);
 }
 
 function roll() { socket.emit("roll", gameCode); }
@@ -104,10 +116,14 @@ socket.on("promptNewGame", ({ newCode }) => {
 
 function update(g) {
   const current = g.players[g.current];
+  gameStarted = g.started;
   document.getElementById("turn").textContent =
-    g.finished ? "Game Over" : "Turn: " + current.name;
+    g.finished ? "Game Over" : (gameStarted ? "Turn: " + current.name : "Waiting for host to start");
 
+  document.getElementById("startBtn").style.display = (isHost && !g.started) ? "inline-block" : "none";
   document.getElementById("newGameBtn").style.display = (g.finished && isHost) ? "inline-block" : "none";
+
+  document.getElementById("gameCode").textContent = "Game Code: " + gameCode;
 
   const diceDiv = document.getElementById("dice");
   diceDiv.innerHTML = "";
@@ -124,7 +140,7 @@ function update(g) {
 
   if(!g.finished) {
     let header = "<tr><th>Category</th>";
-    g.players.forEach((p,i)=>header+=`<th class="${i===g.current?'current':''}">${p.name}</th>`);
+    g.players.forEach((p,i)=>header+=`<th class="${i===g.current && gameStarted?'current':''}">${p.name}</th>`);
     header+="</tr>";
     table.innerHTML+=header;
 
@@ -132,15 +148,14 @@ function update(g) {
       let row=`<tr><td>${cat}</td>`;
       g.players.forEach((p,i)=>{
         const val = p.scores[cat];
-        let cls=i===g.current?'current':'';
-        if(val===undefined && i===g.current && g.rolls>0) row+=`<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
+        let cls=i===g.current && gameStarted?'current':'';
+        if(val===undefined && i===g.current && g.rolls>0 && gameStarted) row+=`<td class="${cls} clickable" onclick="score('${cat}')">•</td>`;
         else row+=`<td class="${cls}">${val??''}</td>`;
       });
       row+="</tr>";
       table.innerHTML+=row;
     });
   } else {
-    // Finished: show ranking
     const sorted = [...g.players].sort((a,b)=>b.total-a.total);
     table.innerHTML="<tr><th>Place</th><th>Name</th><th>Total Score</th></tr>";
     sorted.forEach((p,i)=>{

@@ -91,7 +91,8 @@ io.on("connection", socket => {
       dice: [1,1,1,1,1],
       held: [false,false,false,false,false],
       rolls: 0,
-      finished: false
+      finished: false,
+      started: false
     };
 
     socket.join(code);
@@ -102,6 +103,10 @@ io.on("connection", socket => {
     const g = games[code];
     if (!g || g.players.length >= MAX_PLAYERS) {
       cb({ success: false, error: "Game not found or full" });
+      return;
+    }
+    if (g.started) {
+      cb({ success: false, error: "Game already started" });
       return;
     }
     if (g.players.some(p => p.name === name)) {
@@ -134,9 +139,19 @@ io.on("connection", socket => {
     io.to(code).emit("update", g);
   });
 
+  socket.on("startGame", code => {
+    const g = games[code];
+    if (!g) return;
+    const host = g.players.find(p => p.id === socket.id && p.isHost);
+    if (!host) return;
+
+    g.started = true;
+    io.to(code).emit("update", g);
+  });
+
   socket.on("roll", code => {
     const g = games[code];
-    if (!g || g.finished) return;
+    if (!g || g.finished || !g.started) return;
     const p = g.players[g.current];
     if (p.id !== socket.id || g.rolls >= 3) return;
     g.dice = rollDice(g.dice, g.held);
@@ -164,7 +179,6 @@ io.on("connection", socket => {
     g.rolls = 0;
     g.held = [false,false,false,false,false];
 
-    // Check if finished
     if (g.players.every(pl =>
       CATEGORIES.every(c => pl.scores[c] !== undefined)
     )) g.finished = true;
@@ -172,7 +186,6 @@ io.on("connection", socket => {
     io.to(code).emit("update", g);
   });
 
-  // Host starts a new game
   socket.on("newGame", code => {
     const g = games[code];
     if (!g) return;
@@ -193,17 +206,16 @@ io.on("connection", socket => {
       dice: [1,1,1,1,1],
       held: [false,false,false,false,false],
       rolls: 0,
-      finished: false
+      finished: false,
+      started: false
     };
 
     games[newCode] = newGame;
 
-    // Notify old players to join new game
     g.players.forEach(p => {
       io.to(p.id).emit("promptNewGame", { newCode });
     });
 
-    // Remove old game
     delete games[code];
   });
 
