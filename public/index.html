@@ -3,124 +3,325 @@
 <head>
   <title>Yatzy</title>
   <style>
-    body { font-family: Arial; max-width: 800px; margin: auto; }
-    .dice span {
-      font-size: 32px;
-      padding: 10px;
-      border: 2px solid black;
-      margin: 4px;
-      cursor: pointer;
-    }
+    body { font-family: Arial; max-width: 1200px; margin: auto; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #000; padding: 6px; text-align: center; }
+    th { background: #eee; }
+    .current { background: #c8f7c5; }
+    .clickable { cursor: pointer; background: #f0f0ff; }
+    .hint { background: #ffffcc; }
+    .dice span { font-size: 32px; border: 2px solid black; padding: 10px; margin: 4px; cursor: pointer; display: inline-block; width: 50px; text-align:center;}
     .held { background: #ccc; }
-  </style>
+    button { margin: 4px; padding: 6px 12px; }
+    .dice-row { margin-bottom: 10px; }
+    .section-header { background: #ddd; font-weight: bold; }
+
+
+
+  .dice-row {
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: row;
+  }
+
+  .die {
+    width: 60px;
+    height: 60px;
+    background: #c62828; /* red */
+    border-radius: 12px;
+    margin: 6px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    box-shadow:
+      inset -4px -4px 8px rgba(0,0,0,0.4),
+      inset 4px 4px 8px rgba(255,255,255,0.3),
+      3px 3px 8px rgba(0,0,0,0.5);
+    cursor: pointer;
+    transition: background 0.25s, transform 0.25s;
+  }
+
+  .die.held {
+    background: #fdd835; /* yellow */
+  }
+
+  .pip {
+    width: 10px;
+    height: 10px;
+    background: white;
+    border-radius: 50%;
+    margin: auto;
+  }
+
+  .die.held .pip {
+    background: black;
+  }
+
+  .die.rolling {
+    animation: roll 0.5s ease-in-out;
+  }
+
+  .die.blank {
+    background: #b71c1c; /* darker red */
+    box-shadow:
+        inset -4px -4px 8px rgba(0,0,0,0.5),
+        inset 4px 4px 8px rgba(255,255,255,0.2),
+        3px 3px 8px rgba(0,0,0,0.6);
+    }
+
+  @keyframes roll {
+    0%   { transform: rotate(0deg) scale(1); }
+    25%  { transform: rotate(90deg) scale(1.2); }
+    50%  { transform: rotate(180deg) scale(0.9); }
+    75%  { transform: rotate(270deg) scale(1.1); }
+    100% { transform: rotate(360deg) scale(1); }
+  }
+
+    </style>
 </head>
 <body>
 
 <h2>Yatzy</h2>
 
-<input id="name" placeholder="Name">
-<button onclick="host()">Host</button>
+<div id="lobby">
+  <input id="name" placeholder="Name">
+  <select id="mode">
+    <option value="normal">Normal (5 dice)</option>
+    <option value="crazy">Crazy (10 dice)</option>
+    <option value="insane">Insane (20 dice)</option>
+  </select>
+  <button onclick="host()">Host</button>
+  <input id="joinCode" placeholder="Code">
+  <button onclick="join()">Join</button>
+</div>
 
-<input id="joinCode" placeholder="Game Code">
-<button onclick="join()">Join</button>
-
-<h3 id="gameCode"></h3>
-<hr>
-
-<h3 id="turn"></h3>
-<div id="dice"></div>
-<button onclick="roll()">Roll</button>
-
-<h3>Scores</h3>
-<div id="scores"></div>
+<div id="gameArea" style="display:none;">
+  <h3 id="gameCode"></h3>
+  <h3 id="turn"></h3>
+  <h4 id="rollsLeft"></h4>
+  <div id="dice"></div>
+  <button id="rollBtn" onclick="roll()">Roll</button>
+  <button id="startBtn" style="display:none;" onclick="startGame()">Start Game</button>
+  <button id="leaveBtn" onclick="leaveGame()">Leave Game</button>
+  <button id="newGameBtn" style="display:none;" onclick="startNewGame()">New Game</button>
+  <table id="scoreTable"></table>
+</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
-let currentCode = null;
+let gameCode = null;
+let playerName = null;
+let isHost = false;
+let gameStarted = false;
 
-function host() {
-  const playerName = document.getElementById("name").value.trim();
-  if (!playerName) return alert("Enter your name");
+let animateNextUpdate = false;
 
-  socket.emit("hostGame", { name: playerName }, r => {
-    if (!r.success) return;
-    currentCode = r.code;
-    document.getElementById("gameCode").textContent =
-      "Game Code: " + r.code;
+const upperCats = ["ones","twos","threes","fours","fives","sixes"];
+const lowerCats = ["pair","twoPairs","threeKind","fourKind","smallStraight","largeStraight","fullHouse","chance","yatzy"];
+
+// Rejoin after refresh
+if(localStorage.getItem("yatzyName") && localStorage.getItem("yatzyCode")){
+  playerName = localStorage.getItem("yatzyName");
+  gameCode = localStorage.getItem("yatzyCode");
+  socket.emit("rejoinGame",{name:playerName,code:gameCode},r=>{
+    if(r.success){
+      isHost = r.game.players.find(p=>p.name===playerName)?.isHost;
+      gameStarted = r.game.started;
+      update(r.game);
+    } else {
+      localStorage.removeItem("yatzyName");
+      localStorage.removeItem("yatzyCode");
+    }
+  });
+}
+
+function host(){
+  const name = document.getElementById("name").value.trim();
+  const mode = document.getElementById("mode").value;
+  if(!name) return alert("Enter name");
+  playerName = name;
+  localStorage.setItem("yatzyName",name);
+
+  socket.emit("hostGame",{name,mode},r=>{
+    gameCode = r.code;
+    localStorage.setItem("yatzyCode",gameCode);
+    isHost = true;
     update(r.game);
   });
 }
 
-function join() {
-  const playerName = document.getElementById("name").value.trim();
+function join(){
+  const name = document.getElementById("name").value.trim();
   const code = document.getElementById("joinCode").value.trim().toUpperCase();
-  if (!playerName || !code) return alert("Enter name and code");
+  if(!name||!code) return;
+  playerName = name;
+  localStorage.setItem("yatzyName",name);
+  localStorage.setItem("yatzyCode",code);
 
-  socket.emit("joinGame", { name: playerName, code }, r => {
-    if (!r.success) return alert("Failed to join game");
-    currentCode = code;
-    document.getElementById("gameCode").textContent =
-      "Game Code: " + code;
+  socket.emit("joinGame",{name,code},r=>{
+    if(!r.success) return alert(r.error);
+    gameCode = code;
+    isHost = r.game.players.find(p=>p.name===name)?.isHost;
+    gameStarted = r.game.started;
     update(r.game);
   });
 }
 
-function roll() {
-  socket.emit("roll", currentCode);
+function startGame(){ socket.emit("startGame",gameCode); }
+
+function roll(){
+  animateNextUpdate = true;
+  socket.emit("roll",gameCode);
 }
 
-function hold(i) {
-  socket.emit("hold", { code: currentCode, i });
+function hold(i){ socket.emit("hold",{code:gameCode,i}); }
+function score(cat){ socket.emit("score",{code:gameCode,cat}); }
+
+function leaveGame(){
+  if(!confirm("Are you sure you want to leave the game?")) return;
+  socket.emit("leaveGame",gameCode);
+  localStorage.removeItem("yatzyCode");
+  document.getElementById("lobby").style.display="block";
+  document.getElementById("gameArea").style.display="none";
+  gameCode = null;
+  gameStarted=false;
+  document.getElementById("dice").innerHTML="";
+  document.getElementById("scoreTable").innerHTML="";
 }
 
-function score(cat) {
-  socket.emit("score", { code: currentCode, cat });
+function startNewGame(){ socket.emit("newGame",gameCode); }
+
+socket.on("promptNewGame",({newCode})=>{
+  if(confirm("Host started a new game. Join now?")){
+    gameCode = newCode;
+    localStorage.setItem("yatzyCode",newCode);
+    socket.emit("rejoinGame",{name:playerName,code:newCode},r=>{
+      if(r.success) update(r.game);
+    });
+  }
+});
+
+// ---- Hint calculation ----
+function calcHints(dice){
+  const counts = {};
+  dice.forEach(d=>counts[d]=(counts[d]||0)+1);
+  const total = dice.reduce((a,b)=>a+b,0);
+  const hints = {};
+  for(let i=1;i<=6;i++) hints[upperCats[i-1]]=(counts[i]||0)*i;
+  const pairs = Object.keys(counts).filter(n=>counts[n]>=2).map(Number).sort((a,b)=>b-a);
+  hints.pair = pairs[0]?pairs[0]*2:0;
+  hints.twoPairs = pairs.length>=2?pairs[0]*2 + pairs[1]*2:0;
+  const three = Object.keys(counts).filter(n=>counts[n]>=3).map(Number).sort((a,b)=>b-a);
+  hints.threeKind = three[0]?three[0]*3:0;
+  const four = Object.keys(counts).filter(n=>counts[n]>=4).map(Number).sort((a,b)=>b-a);
+  hints.fourKind = four[0]?four[0]*4:0;
+  const sorted = [...new Set(dice)].sort((a,b)=>a-b);
+  hints.smallStraight = sorted.join(",").includes("1,2,3,4,5")?15:0;
+  hints.largeStraight = sorted.join(",").includes("2,3,4,5,6")?20:0;
+  hints.fullHouse = three[0] && pairs.length>=2 ? three[0]*3 + pairs[0]*2 : 0;
+  hints.chance = total;
+  hints.yatzy = Object.values(counts).includes(dice.length)?50:0;
+  return hints;
 }
 
-function update(g) {
+// ---- Update UI ----
+function update(g){
   const current = g.players[g.current];
-  document.getElementById("turn").textContent = g.finished
-    ? "Game Over — Winner: " +
-      [...g.players].sort((a,b)=>b.total-a.total)[0].name
-    : "Turn: " + current.name;
+  gameStarted = g.started;
 
+  document.getElementById("lobby").style.display = gameCode ? "none" : "block";
+  document.getElementById("gameArea").style.display = gameCode ? "block" : "none";
+
+  document.getElementById("gameCode").textContent = "Game Code: "+gameCode;
+  document.getElementById("turn").textContent =
+    g.finished ? "Game Over" : (g.started ? "Turn: "+current.name : "Waiting for host");
+
+  document.getElementById("rollBtn").disabled =
+    !g.started || current.name!==playerName || g.rolls>=3;
+
+  document.getElementById("startBtn").style.display =
+    isHost && !g.started ? "inline-block" : "none";
+
+  document.getElementById("newGameBtn").style.display =
+    g.finished && isHost ? "inline-block" : "none";
+
+  // ---- Dice rendering ----
   const diceDiv = document.getElementById("dice");
   diceDiv.innerHTML = "";
-  g.dice.forEach((d,i) => {
-    const s = document.createElement("span");
-    s.textContent = d;
-    if (g.held[i]) s.classList.add("held");
-    s.onclick = () => hold(i);
-    diceDiv.appendChild(s);
-  });
 
-  const scoresDiv = document.getElementById("scores");
-  scoresDiv.innerHTML = "";
-  g.players.forEach(p => {
-    scoresDiv.innerHTML += `<b>${p.name}</b> (${p.total})<br>`;
-    Object.entries(p.scores).forEach(([c,v]) =>
-      scoresDiv.innerHTML += `${c}: ${v}<br>`
-    );
+  const isBlank = g.rolls === 0;
 
-    if (p.id === current.id && !g.finished) {
-      [
-        "ones","twos","threes","fours","fives","sixes",
-        "pair","twoPairs","threeKind","fourKind",
-        "smallStraight","largeStraight","fullHouse",
-        "chance","yatzy"
-      ].forEach(c => {
-        if (p.scores[c] === undefined)
-          scoresDiv.innerHTML +=
-            `<button onclick="score('${c}')">${c}</button>`;
+  const pipMap = {
+    1:[4],2:[0,8],3:[0,4,8],
+    4:[0,2,6,8],5:[0,2,4,6,8],6:[0,2,3,5,6,8]
+  };
+
+  const rowSize = 5;
+  for(let i=0;i<g.dice.length;i+=rowSize){
+    const row = document.createElement("div");
+    row.className="dice-row";
+
+    g.dice.slice(i,i+rowSize).forEach((value,j)=>{
+      const die = document.createElement("div");
+      die.className="die";
+
+      if(isBlank){
+        die.classList.add("blank");
+      } else {
+        if(g.held[i+j]) die.classList.add("held");
+
+        if(animateNextUpdate && !g.held[i+j]){
+          die.classList.add("rolling");
+          setTimeout(()=>die.classList.remove("rolling"),500);
+        }
+
+        for(let k=0;k<9;k++){
+          const cell=document.createElement("div");
+          if(pipMap[value].includes(k)) cell.className="pip";
+          die.appendChild(cell);
+        }
+
+        if(current.name===playerName && g.started){
+          die.onclick=()=>hold(i+j);
+        }
+      }
+      row.appendChild(die);
+    });
+    diceDiv.appendChild(row);
+  }
+
+  animateNextUpdate = false;
+
+  // ---- Score table (unchanged) ----
+  const table=document.getElementById("scoreTable");
+  table.innerHTML="";
+  if(!g.finished){
+    const hints=calcHints(g.dice);
+    let header="<tr><th>Category</th>";
+    g.players.forEach((p,i)=>header+=`<th class="${i===g.current?'current':''}">${p.name}</th>`);
+    header+="</tr>";
+    table.innerHTML+=header;
+
+    [...upperCats,...lowerCats].forEach(cat=>{
+      let row=`<tr><td>${cat}</td>`;
+      g.players.forEach((p,i)=>{
+        const clickable = i===g.current && g.rolls>0 && p.scores[cat]===undefined;
+        row+=`<td class="${i===g.current?'current':''} ${clickable?'clickable':''}"
+          onclick="${clickable?`score('${cat}')`:''}">
+          ${p.scores[cat]??(clickable?hints[cat]:"")}
+        </td>`;
       });
-    }
-    scoresDiv.innerHTML += "<hr>";
-  });
+      row+="</tr>";
+      table.innerHTML+=row;
+    });
+  }
+
 }
 
-socket.on("update", update);
+socket.on("update",update);
 </script>
+
 
 </body>
 </html>
